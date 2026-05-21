@@ -1,0 +1,36 @@
+{
+  "name": "countdowncord",
+  "version": "0.1.0",
+  "description": "A site that displays a countdown controllable via discord bot",
+  "main": "index.js",
+  "dependencies": {
+    "discord.js": "^14.11.0",
+    "dotenv": "^16.4.5",
+    "ini": "^5.0.0",
+    "nodemon": "^3.1.14",
+    "pm2": "^5.4.2",
+    "bcrypt": "^6.0.0",
+    "body-parser": "^2.2.2",
+    "ejs": "^5.0.1",
+    "express": "^5.2.1",
+    "express-session": "^1.19.0",
+    "sqlite3": "^6.0.1"
+  },
+  "scripts": {
+    "start": "nodemon index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Newfies/CountDowncord.git"
+  },
+  "keywords": [
+    "Discord",
+    "CountDown"
+  ],
+  "author": "Newfies",
+  "license": "GPL-3.0",
+  "bugs": {
+    "url": "https://github.com/Newfies/CountDowncord/issues"
+  },
+  "homepage": "https://github.com/Newfies/CountDowncord#readme"
+}

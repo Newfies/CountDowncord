@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Countdown Timer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #111;
+            color: #fff;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        #container {
+            text-align: center;
+        }
+
+        #countdown {
+            font-size: 3em;
+            margin-top: 20px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+<div id="container">
+    <h1>Countdown</h1>
+    <div id="countdown">Loading...</div>
+</div>
+
+<script>    
+    let targetDate = null;
+    let timeAsString = "Loading...";
+
+    async function fetchTargetDate() {
+        try {
+            const response = await fetch('/api/target');
+            const data = await response.json();
+            targetDate = data.targetDate;
+            // Run update immediately after getting data
+            updateCountdown();
+        } catch (err) {
+            console.error("Failed to fetch date:", err);
+            document.getElementById("countdown").innerHTML = "Error loading date";
+        }
+    }
+
+    function updateCountdown() {
+        // Don't do anything if we haven't received the date yet
+        if (!targetDate) return;
+
+        const now = new Date().getTime();
+        const distance = targetDate - now;
+
+        if (distance <= 0) {
+            timeAsString = "Time's up!";
+        } else {
+            const days = Math.floor(distance / (1000 * 60 * 60 * 24));
+            const hours = Math.floor((distance / (1000 * 60 * 60)) % 24);
+            const minutes = Math.floor((distance / (1000 * 60)) % 60);
+            const seconds = Math.floor((distance / 1000) % 60);
+            timeAsString = `${days}d ${hours}h ${minutes}m ${seconds}s`;
+        }
+
+        const countdownElement = document.getElementById("countdown");
+        if (countdownElement) {
+            countdownElement.innerHTML = timeAsString;
+            document.title = `Countdown Timer | ${timeAsString}`;
+        }
+    }
+    
+    // Copy to clipboard logic
+    document.getElementById("countdown").addEventListener("click", function(){
+        if (timeAsString === "Loading...") return;
+        navigator.clipboard.writeText(timeAsString).then(() => {
+            alert("Copied: " + timeAsString);
+        }).catch(err => {
+            console.error("Failed to copy:", err);
+        });
+    });
+
+    // Start the process
+    fetchTargetDate();
+    // Update the numbers every second
+    setInterval(updateCountdown, 1000);
+    // Refresh the target date from the server every 30 seconds
+    setInterval(fetchTargetDate, 30000);
+</script>
+
+</body>
+</html>
