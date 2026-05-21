@@ -1,20 +1,35 @@
-// Packages and Requires
-const dotenv = require("dotenv").config();
+// 1. GLOBAL FIX FOR TIMEOUTS (Put this at the very top)
+const { setGlobalDispatcher, Agent } = require("undici");
+setGlobalDispatcher(new Agent({ connect: { timeout: 60_000 } }));
+
+process.on("unhandledRejection", (error) => {
+  console.error("[ UNHANDLED REJECTION ]", error);
+});
+
+// 2. Packages and Requires
+require("dotenv").config();
 const fs = require("fs");
-const ini = require("ini");
-const { exec } = require("child_process");
-const pm2 = require("pm2");
+const path = require("path");
 const chalk = require("chalk");
-const https = require("https");
+const mongoose = require("mongoose");
+const express = require("express");
+const session = require("express-session");
+const bodyParser = require("body-parser");
+
 const {
   Client,
   Events,
   GatewayIntentBits,
-  EmbedBuilder,
   SlashCommandBuilder,
   PermissionsBitField,
   ActivityType,
 } = require("discord.js");
+
+// 3. Script Variables
+const TOKEN = process.env.TOKEN;
+const PORT = process.env.PORT || 4000;
+const MONGO_URI = process.env.MONGO_URI;
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -22,26 +37,15 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMembers,
   ],
+  rest: { timeout: 60000 },
 });
-const express = require("express");
-const session = require("express-session");
-const bodyParser = require("body-parser");
-const path = require("path");
+
 const app = express();
-
-// Script Variables
-const TOKEN = process.env.TOKEN;
-const PORT = process.env.PORT || 4000;
-
-// Dynamic Countdown Variable (Default value)
-let targetDate = new Date("2026-06-07T20:00:00-05:00").getTime();
 
 // Custom Functions
 function getTimestamp() {
   const date = new Date();
-  const hours = date.getHours().toString().padStart(2, "0");
-  const minutes = date.getMinutes().toString().padStart(2, "0");
-  return `${hours}:${minutes}`;
+  return `${date.getHours().toString().padStart(2, "0")}:${date.getMinutes().toString().padStart(2, "0")}`;
 }
 
 function log(LOG, CODE) {
@@ -52,119 +56,100 @@ function log(LOG, CODE) {
   if (CODE == 4) console.log(`${ts} [ ${chalk.blue("SERVER")} ] | ${LOG}`);
 }
 
-// Slash Commands Definitions
-const ping = new SlashCommandBuilder()
-  .setName("ping")
-  .setDescription("Simple ping command!");
+// 4. MongoDB Configuration
+const Setting = mongoose.model("Setting", new mongoose.Schema({
+  key: { type: String, required: true, unique: true },
+  value: { type: Number, required: true },
+}));
 
-const gettime = new SlashCommandBuilder()
-  .setName("gettime")
-  .setDescription("Get the remaining time for the countdown");
+if (MONGO_URI) {
+  mongoose.connect(MONGO_URI)
+    .then(() => log("Connected to MongoDB Atlas", 1))
+    .catch((err) => log(`MongoDB Connection Error: ${err}`, 3));
+}
 
+let targetDate = new Date("2026-06-07T20:00:00-05:00").getTime();
+
+async function loadTargetDateFromDB() {
+  if (!MONGO_URI) return;
+  try {
+    const doc = await Setting.findOne({ key: "targetDate" });
+    if (doc) {
+      targetDate = doc.value;
+      log(`Restored target date from DB`, 1);
+    }
+  } catch (err) {
+    log(`Error loading data from DB: ${err}`, 3);
+  }
+}
+loadTargetDateFromDB();
+
+// 5. Slash Commands
+const ping = new SlashCommandBuilder().setName("ping").setDescription("Simple ping!");
+const gettime = new SlashCommandBuilder().setName("gettime").setDescription("Get current countdown time");
 const setdate = new SlashCommandBuilder()
   .setName("setdate")
   .setDescription("Set the countdown target date")
-  .addStringOption((option) =>
-    option
-      .setName("date")
-      .setDescription("Format: YYYY-MM-DD HH:MM (e.g. 2026-12-25 18:00)")
-      .setRequired(true)
-  );
+  .addStringOption(opt => opt.setName("date").setDescription("YYYY-MM-DD HH:MM").setRequired(true));
 
-// Client Events
-client.on("ready", async () => {
-  log(`${client.user.tag} is now running!`, 1);
-
-  await client.application.commands.set([ping, gettime, setdate]);
-  log(`Slash commands registered`, 1);
-
-  client.user.setActivity({
-    name: `Managing a CountDown`,
-    type: ActivityType.Watching,
-  });
+// 6. Bot Logic
+client.on(Events.ClientReady, async () => {
+  log(`${client.user.tag} is running!`, 1);
+  try {
+    await client.application.commands.set([ping, gettime, setdate]);
+    log("Commands registered", 1);
+  } catch (e) { log(`Command Registry Error: ${e.message}`, 3); }
+  client.user.setActivity({ name: `a CountDown`, type: ActivityType.Watching });
 });
 
-client.on("interactionCreate", async (interaction) => {
+client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isCommand()) return;
 
-  // PING COMMAND
   if (interaction.commandName === "ping") {
     await interaction.reply({ content: "Pong!", ephemeral: true });
   }
 
-  // GETTIME COMMAND
   if (interaction.commandName === "gettime") {
-    const now = new Date().getTime();
-    const distance = targetDate - now;
-
-    if (distance <= 0) {
-      return interaction.reply("The countdown has already ended!");
-    }
-
-    const days = Math.floor(distance / (1000 * 60 * 60 * 24));
-    const hours = Math.floor((distance / (1000 * 60 * 60)) % 24);
-    const minutes = Math.floor((distance / (1000 * 60)) % 60);
-
-    await interaction.reply({
-      content: `⏳ Time remaining: **${days}d ${hours}h ${minutes}m**`,
-    });
+    const distance = targetDate - Date.now();
+    if (distance <= 0) return interaction.reply("The countdown has ended!");
+    
+    const d = Math.floor(distance / 86400000);
+    const h = Math.floor((distance % 86400000) / 3600000);
+    const m = Math.floor((distance % 3600000) / 60000);
+    const s = Math.floor((distance % 60000) / 1000);
+    
+    await interaction.reply(`⏳ Time remaining: **${d}d ${h}h ${m}m ${s}s**`);
   }
 
-  // SETDATE COMMAND
   if (interaction.commandName === "setdate") {
-    // Only allow users with Manage Guild permission to change the date
-    if (
-      !interaction.member.permissions.has(
-        PermissionsBitField.Flags.ManageGuild
-      )
-    ) {
-      return interaction.reply({
-        content: "You don't have permission to change the date.",
-        ephemeral: true,
-      });
+    if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild)) {
+        return interaction.reply({ content: "Missing Permissions", ephemeral: true });
     }
-
+    
+    await interaction.deferReply();
     const dateInput = interaction.options.getString("date");
-    const newDate = new Date(dateInput).getTime();
+    const newDate = new Date(dateInput.replace(" ", "T")).getTime();
 
-    if (isNaN(newDate)) {
-      return interaction.reply({
-        content: "Invalid date format! Please use `YYYY-MM-DD HH:MM`",
-        ephemeral: true,
-      });
-    }
+    if (isNaN(newDate)) return interaction.editReply("Invalid format! Use YYYY-MM-DD HH:MM");
 
     targetDate = newDate;
-    log(`Countdown updated to: ${dateInput}`, 4);
-    await interaction.reply(`✅ Countdown date updated to: **${dateInput}**`);
+    try {
+      await Setting.findOneAndUpdate({ key: "targetDate" }, { value: targetDate }, { upsert: true });
+      await interaction.editReply(`✅ Saved: **${new Date(targetDate).toLocaleString()}**`);
+    } catch (err) {
+      await interaction.editReply("Saved to memory only (DB Error).");
+    }
   }
 });
 
-client.login(TOKEN);
+// START BOT
+client.login(TOKEN).catch(err => log(`CRITICAL LOGIN ERROR: ${err}`, 3));
 
-// App configuration
+// 7. Web Dashboard
 app.set("view engine", "ejs");
 app.use(express.static(path.join(__dirname, "public")));
 app.use(bodyParser.json());
-app.use(
-  session({
-    secret: process.env.SECRET || "fallback-secret",
-    resave: false,
-    saveUninitialized: true,
-  })
-);
-
-// API endpoint for the web dashboard to get the current target
-app.get("/api/target", (req, res) => {
-  res.json({ targetDate });
-});
-
+app.use(session({ secret: "secret", resave: false, saveUninitialized: true }));
+app.get("/api/target", (req, res) => res.json({ targetDate }));
 app.get("/", (req, res) => res.render("dashboard"));
-
-app.use((req, res) => {
-  res.status(404).redirect("/");
-});
-
-app.listen(PORT, () =>
-  console.log(`Server running on http://localhost:${PORT}`)
-);
+app.listen(PORT, () => log(`Web Dashboard on port ${PORT}`, 4));
